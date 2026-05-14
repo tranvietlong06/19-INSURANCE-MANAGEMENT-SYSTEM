@@ -4,11 +4,13 @@ import pandas as pd
 from datetime import date
 import time 
 
+# EK
+ENCRYPTION_KEY = 'secret_key_123' 
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Insurance Manager Pro", page_icon="🛡️", layout="wide")
 
-# --- CUSTOM FONT & COLOR INJECTION (ICON-SAFE VERSION) ---
+# --- CUSTOM FONT & COLOR INJECTION ---
 st.markdown(
     """
     <style>
@@ -86,11 +88,44 @@ def init_connection():
 
 conn = init_connection()
 
+# --- SERVICE ---
+def fetch_customers():
+    # Use the same key: 'secret_key_123'
+    query = f"""
+        SELECT 
+            CustomerID, 
+            CustomerName, 
+            AES_DECRYPT(Address, '{ENCRYPTION_KEY}') AS Address, 
+            AES_DECRYPT(PhoneNumber, '{ENCRYPTION_KEY}') AS PhoneNumber 
+        FROM Customers
+    """
+    df = pd.read_sql(query, conn)
+    
+    # Convert from binary bytes back to UTF-8 strings
+    df['Address'] = df['Address'].apply(lambda x: x.decode('utf-8') if x else "")
+    df['PhoneNumber'] = df['PhoneNumber'].apply(lambda x: x.decode('utf-8') if x else "")
+    return df
+
+def fetch_contracts():
+    # This query pulls the contracts and calculates expiration using your SQL UDF
+    query = """
+        SELECT 
+            ic.ContractID, 
+            c.CustomerName, 
+            it.InsuranceName, 
+            ic.SignDate, 
+            GetContractExpiration(ic.ContractID) AS ExpirationDate
+        FROM InsuranceContracts ic
+        JOIN Customers c ON ic.CustomerID = c.CustomerID
+        JOIN InsuranceTypes it ON ic.InsuranceTypeID = it.InsuranceTypeID
+    """
+    return pd.read_sql(query, conn)
+
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.header("🛡️ Navigation Menu")
 menu = [
     "Menu", 
-    "Business Dashboard", 
+    "Dashboard", 
     "Manage Customers", 
     "Insurance Products", # <-- Add this new option
     "Manage Contracts", 
@@ -123,7 +158,7 @@ if choice == "Menu":
     st.write("👈 **Select an option from the navigation menu on the left to get started.**")
 
 elif choice == "Dashboard":
-    st.title("📊 Business Intelligence Dashboard")
+    st.title("📊 Dashboard")
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM PayoutSummary;")
     records = cursor.fetchall()
@@ -182,24 +217,32 @@ elif choice == "Dashboard":
 
 elif choice == "Manage Customers":
     st.title("👤 Customer Management")
-    # Added a third tab for "Delete"
     tab1, tab2, tab3 = st.tabs(["View All", "Add New", "Delete Customer"])
-    
+
+    # 1. Fetch the decrypted data ONCE for the whole section
+    data = fetch_customers() 
+
     with tab1:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM Customers;")
-        display_df(cursor.fetchall(), ["ID", "Name", "Address", "Phone"])
+        st.subheader("All Enrolled Customers")
+        # Use the decrypted data here instead of a raw cursor.execute
+        if not data.empty:
+            st.dataframe(data, use_container_width=True)
+        else:
+            st.info("No customer records found.")
         
     with tab2:
         with st.form("add_customer_form"):
-            name = st.text_input("Full Name")
-            addr = st.text_input("Address")
-            phone = st.text_input("Phone Number")
-            
-            # --- DRY PRINCIPLE APPLIED HERE ---
-            if st.form_submit_button("Save Customer"):
-                query = "INSERT INTO Customers (CustomerName, Address, PhoneNumber) VALUES (%s, %s, %s)"
-                execute_and_refresh(conn, query, (name, addr, phone), f"Customer '{name}' added successfully!")
+          name = st.text_input("Full Name")
+          addr = st.text_input("Address")
+          phone = st.text_input("Phone Number")
+        
+          if st.form_submit_button("Save Customer"):
+            # The query must call AES_ENCRYPT so the DB stores binary, not plain text
+            query = f"""
+                INSERT INTO Customers (CustomerName, Address, PhoneNumber) 
+                VALUES (%s, AES_ENCRYPT(%s, '{ENCRYPTION_KEY}'), AES_ENCRYPT(%s, '{ENCRYPTION_KEY}'))
+            """
+            execute_and_refresh(conn, query, (name, addr, phone), f"Customer '{name}' secured and added!")
                 
     with tab3:
         st.warning("⚠️ Warning: Deleting a customer will also automatically delete all their contracts, assessments, and payouts.")
@@ -242,6 +285,16 @@ elif choice == "Insurance Products":
 
 elif choice == "Manage Contracts":
     st.title("📝 Contract Management")
+
+    df = fetch_contracts() 
+
+    if not df.empty:
+        # 2. Now 'df' is defined, so line 318 will work!
+        styled_df = df.style.apply(highlight_expiring, axis=1).hide(axis="index")
+        st.dataframe(styled_df, use_container_width=True)
+    else:
+        st.info("No active contracts found.")
+    
     tab1, tab2 = st.tabs(["Active Contracts", "Create New Contract"])
     
     with tab1:
