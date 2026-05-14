@@ -1,8 +1,5 @@
 # 🛡️ Project 19: Insurance Management System
 
-**National Economics University (NEU)**
-**Author:** Tran Viet Long
-
 ## 📌 Project Overview
 The Insurance Management System is a centralized, data-driven application designed to handle the core operations of an insurance agency. It seamlessly connects a robust **MySQL** relational database with a modern **Streamlit (Python)** graphical interface. 
 
